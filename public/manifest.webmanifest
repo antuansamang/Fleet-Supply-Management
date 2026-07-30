@@ -1,6 +1,6 @@
 {
-  "name": "Explorer Fleet Control",
-  "short_name": "Fleet Control",
+  "name": "Supply Management",
+  "short_name": "Supply Management",
   "description": "Gestion de abastecimiento de la flota",
   "lang": "es",
   "start_url": "/",
