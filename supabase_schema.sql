@@ -47,3 +47,18 @@ create policy "acceso total anon" on hx_facturas
 drop policy if exists "acceso total anon" on hx_config;
 create policy "acceso total anon" on hx_config
   for all using (true) with check (true);
+
+-- Bucket temporal para PDFs/imágenes grandes ------------------------------------------
+-- Las funciones serverless de Vercel rechazan (HTTP 413) cuerpos de más de ~4.5MB, así
+-- que un escaneo grande no cabe si se manda codificado en base64 directo a /api/claude.
+-- En su lugar, la app sube esos archivos aquí y la función serverless los descarga por su
+-- cuenta antes de mandarlos a Claude. Es un bucket de paso: la app borra cada archivo justo
+-- después de procesarlo, así que no debería acumular datos.
+
+insert into storage.buckets (id, name, public)
+values ('temp-docs', 'temp-docs', true)
+on conflict (id) do nothing;
+
+drop policy if exists "acceso total anon temp-docs" on storage.objects;
+create policy "acceso total anon temp-docs" on storage.objects
+  for all using (bucket_id = 'temp-docs') with check (bucket_id = 'temp-docs');

@@ -164,9 +164,52 @@ const toBase64 = (file) =>
     r.readAsDataURL(file);
   });
 
+// Las funciones serverless de Vercel rechazan cuerpos de más de 4.5MB (HTTP 413) antes
+// de que nuestro código en /api/claude.js siquiera se ejecute. Un PDF escaneado codificado
+// en base64 pesa ~33% más que el archivo original, así que cualquier escaneo de más de
+// ~3MB puede superar ese límite. Para esos casos, subimos el archivo a un bucket temporal
+// de Supabase Storage y solo mandamos la referencia (bucket + ruta) al servidor, que la
+// resuelve y descarga el archivo por su cuenta antes de llamar a Claude.
+const LIMITE_INLINE = 3 * 1024 * 1024; // 3MB
+const BUCKET_TEMPORAL = "temp-docs";
+
+async function subirArchivoTemporal(file) {
+  const ext = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")) : "";
+  const path = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)) + ext;
+  const { error } = await supabase.storage.from(BUCKET_TEMPORAL).upload(path, file, {
+    contentType: file.type || undefined,
+    upsert: false,
+  });
+  if (error) {
+    throw new Error(
+      "No se pudo subir el archivo a Storage (" + error.message + "). " +
+      "Verifica que exista el bucket '" + BUCKET_TEMPORAL + "' en Supabase (ver supabase_schema.sql)."
+    );
+  }
+  return path;
+}
+
+// Borra del bucket temporal los archivos que se hayan subido para un conjunto de blocks.
+// No es crítico si falla (el bucket es solo de paso), por eso nunca lanza error.
+async function limpiarTemporales(blocks) {
+  const rutas = (blocks || [])
+    .filter((b) => b && b.source && b.source.type === "storage_ref")
+    .map((b) => b.source.path);
+  if (!rutas.length) return;
+  try {
+    await supabase.storage.from(BUCKET_TEMPORAL).remove(rutas);
+  } catch (e) {
+    /* silencioso: el bucket temporal se puede limpiar manualmente si hace falta */
+  }
+}
+
 async function fileToBlocks(file) {
   const name = file.name.toLowerCase();
   if (name.endsWith(".pdf")) {
+    if (file.size > LIMITE_INLINE) {
+      const path = await subirArchivoTemporal(file);
+      return [{ type: "document", source: { type: "storage_ref", bucket: BUCKET_TEMPORAL, path, media_type: "application/pdf" } }];
+    }
     const b64 = await toBase64(file);
     return [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }];
   }
@@ -174,6 +217,10 @@ async function fileToBlocks(file) {
     const mt = name.endsWith(".png") ? "image/png"
       : name.endsWith(".webp") ? "image/webp"
       : name.endsWith(".gif") ? "image/gif" : "image/jpeg";
+    if (file.size > LIMITE_INLINE) {
+      const path = await subirArchivoTemporal(file);
+      return [{ type: "image", source: { type: "storage_ref", bucket: BUCKET_TEMPORAL, path, media_type: mt } }];
+    }
     const b64 = await toBase64(file);
     return [{ type: "image", source: { type: "base64", media_type: mt, data: b64 } }];
   }
@@ -1015,8 +1062,9 @@ export default function ExplorerFleetControl() {
       const etiqueta = m.archivos.length > 1
         ? "Requisición " + (i + 1) + " de " + m.archivos.length + " (N° " + af.numero.trim() + "): "
         : "";
+      let blocks = null;
       try {
-        const blocks = await fileToBlocks(af.archivo);
+        blocks = await fileToBlocks(af.archivo);
         const { items, verificacion } = await extraerItemsVerificado(blocks, (msg) =>
           setModalReq((prev) => (prev ? { ...prev, progreso: etiqueta + msg } : prev))
         );
@@ -1031,6 +1079,8 @@ export default function ExplorerFleetControl() {
           items: [], verificacion: null, error: e.message || "No se pudo leer este documento.",
           nDesc: "", nCant: "", nUnidad: "",
         });
+      } finally {
+        if (blocks) await limpiarTemporales(blocks);
       }
     }
     setModalReq((prev) => (prev ? { ...prev, paso: "preview", resultados, error: null, progreso: "" } : prev));
@@ -1112,8 +1162,14 @@ export default function ExplorerFleetControl() {
         const compact = refs.slice(0, 600).map((p, idx) => [idx, p.it.descripcion, p.it.cantidad, p.it.unidad]);
 
         const blocks = await fileToBlocks(file);
-        const texto = await callClaude([...blocks, { type: "text", text: promptFactura(compact) }], 4000);
-        const { data: parsed } = parseJSONSafe(texto);
+        let texto, parsed;
+        try {
+          texto = await callClaude([...blocks, { type: "text", text: promptFactura(compact) }], 4000);
+          ({ data: parsed } = parseJSONSafe(texto));
+        } catch (eBlocks) {
+          await limpiarTemporales(blocks);
+          throw eBlocks;
+        }
 
         const coincidencias = [];
         const refsUsados = [];
@@ -1209,6 +1265,8 @@ export default function ExplorerFleetControl() {
           totalCoincidencias: round2(coincidencias.reduce((s, c) => s + (c.precioTotal || 0), 0)),
           totalExtras: round2(extras.reduce((s, c) => s + (c.precioTotal || 0), 0)),
         });
+
+        await limpiarTemporales(blocks);
       }
 
       for (const f of nuevasFacturas) await persistir(kFact(f.id), f);
