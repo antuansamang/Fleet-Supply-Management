@@ -742,7 +742,7 @@ const TarjetaReq = ({ r, abierto, onToggle, confirmarBorrar, onEliminar, onConci
   );
 };
 
-const DetalleFactura = ({ f, conAcciones, confirmarBorrar, onEliminarLinea, onAgregarItem, onVincularExtra }) => (
+const DetalleFactura = ({ f, conAcciones, confirmarBorrar, onEliminarLinea, onAgregarItem, onVincularExtra, onConfirmarExtra }) => (
   <div className="space-y-3">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={F_MONO}>
       <span className={"inline-flex items-center gap-1 " + (f.verificada ? "text-emerald-700" : "text-slate-400")}>
@@ -801,12 +801,27 @@ const DetalleFactura = ({ f, conAcciones, confirmarBorrar, onEliminarLinea, onAg
         <div className="divide-y divide-amber-50 overflow-hidden rounded-lg border border-amber-100">
           {f.extras.map((x, i) => {
             const pidiendo = confirmarBorrar === "lf:" + f.id + ":x:" + i;
+            const confirmada = !!x.confirmada;
             return (
-              <div key={i} className="flex items-center gap-2 bg-amber-50/40 px-2.5 py-1.5">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+              <div key={i} className={"flex items-center gap-2 px-2.5 py-1.5 " + (confirmada ? "bg-emerald-50/40" : "bg-amber-50/40")}>
+                {conAcciones && onConfirmarExtra ? (
+                  <button
+                    onClick={() => onConfirmarExtra(f.id, i)}
+                    className={"shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600 " +
+                      (confirmada ? "text-emerald-600" : "text-amber-500 hover:text-emerald-600")}
+                    title={confirmada ? "Confirmada: quitar confirmación" : "Confirmar esta compra (sin vincularla a una requisición)"}
+                    aria-label={confirmada ? "Quitar confirmación" : "Confirmar ítem"}
+                  >
+                    {confirmada ? <CheckCircle2 className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
+                  </button>
+                ) : (
+                  <AlertTriangle className={"h-4 w-4 shrink-0 " + (confirmada ? "text-emerald-600" : "text-amber-500")} />
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-slate-800">{x.descripcion}</p>
-                  <p className="text-xs text-slate-500" style={F_MONO}>{x.cantidad} {x.unidad}</p>
+                  <p className="text-xs text-slate-500" style={F_MONO}>
+                    {x.cantidad} {x.unidad}{confirmada && <span className="ml-1 rounded bg-emerald-100 px-1 py-0.5 font-semibold text-emerald-700">CONFIRMADO</span>}
+                  </p>
                 </div>
                 <p className="shrink-0 text-xs font-semibold text-slate-900" style={F_MONO}>{fmtMoney(x.precioTotal)}</p>
                 {conAcciones && onVincularExtra && (
@@ -845,8 +860,9 @@ const DetalleFactura = ({ f, conAcciones, confirmarBorrar, onEliminarLinea, onAg
   </div>
 );
 
-const TarjetaFact = ({ f, abierto, onToggle, confirmarBorrar, onEliminar, onEliminarLinea, onAgregarItem, onVincularExtra }) => {
+const TarjetaFact = ({ f, abierto, onToggle, confirmarBorrar, onEliminar, onEliminarLinea, onAgregarItem, onVincularExtra, onConfirmarExtra }) => {
   const pidiendo = confirmarBorrar === "fact:" + f.id;
+  const extrasPend = (f.extras || []).filter((x) => !x.confirmada).length;
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center gap-2 p-3">
@@ -862,7 +878,9 @@ const TarjetaFact = ({ f, abierto, onToggle, confirmarBorrar, onEliminar, onElim
           </div>
           <div className="shrink-0 text-right">
             <p className="text-xs text-emerald-700" style={F_MONO}>✓ {(f.coincidencias || []).length}</p>
-            <p className="text-xs text-amber-700" style={F_MONO}>+ {(f.extras || []).length}</p>
+            {extrasPend > 0
+              ? <p className="text-xs text-amber-700" style={F_MONO}>+ {extrasPend}</p>
+              : (f.extras || []).length > 0 && <p className="text-xs text-emerald-700" style={F_MONO}>+ {(f.extras || []).length} ✓</p>}
           </div>
         </button>
         <button
@@ -876,7 +894,7 @@ const TarjetaFact = ({ f, abierto, onToggle, confirmarBorrar, onEliminar, onElim
       </div>
       {abierto && (
         <div className="border-t border-slate-100 px-3 py-3">
-          <DetalleFactura f={f} conAcciones confirmarBorrar={confirmarBorrar} onEliminarLinea={onEliminarLinea} onAgregarItem={onAgregarItem} onVincularExtra={onVincularExtra} />
+          <DetalleFactura f={f} conAcciones confirmarBorrar={confirmarBorrar} onEliminarLinea={onEliminarLinea} onAgregarItem={onAgregarItem} onVincularExtra={onVincularExtra} onConfirmarExtra={onConfirmarExtra} />
         </div>
       )}
     </div>
@@ -975,7 +993,7 @@ export default function ExplorerFleetControl() {
     return { total: reqs.length, abiertas, pend, rec, pct, compras: round2(compras) };
   }, [reqs, facts]);
 
-  const extrasTotal = useMemo(() => facts.reduce((s, f) => s + ((f.extras || []).length), 0), [facts]);
+  const extrasTotal = useMemo(() => facts.reduce((s, f) => s + ((f.extras || []).filter((x) => !x.confirmada).length), 0), [facts]);
 
   const semanasDisponibles = useMemo(() => {
     const mapa = new Map();
@@ -1587,6 +1605,16 @@ export default function ExplorerFleetControl() {
     if (regFinal) await persistir(kReq(reqId), regFinal);
   };
 
+  // Confirma (o quita la confirmación de) un "extra" de factura: una compra real que no
+  // se pudo vincular a ninguna requisición. Confirmarlo lo saca del aviso de "sin
+  // requisición vinculada" sin necesidad de borrarlo ni de forzar un vínculo a un pedido.
+  const toggleConfirmarExtra = async (factId, idx) => {
+    const fact = facts.find((f) => f.id === factId);
+    if (!fact) return;
+    const extras = (fact.extras || []).map((x, i) => (i === idx ? { ...x, confirmada: !x.confirmada } : x));
+    await reemplazarFactura({ ...fact, extras });
+  };
+
   const eliminarLineaFactura = async (factId, tipo, idx) => {
     if (!pedirConfirmacion("lf:" + factId + ":" + tipo + ":" + idx)) return;
     const fact = facts.find((f) => f.id === factId);
@@ -1877,7 +1905,7 @@ export default function ExplorerFleetControl() {
               onToggle={() => setExpandidosF((p) => ({ ...p, [f.id]: !p[f.id] }))}
               confirmarBorrar={confirmarBorrar} onEliminar={eliminarFact}
               onEliminarLinea={eliminarLineaFactura} onAgregarItem={abrirItemFactura}
-              onVincularExtra={abrirVincularExtra}
+              onVincularExtra={abrirVincularExtra} onConfirmarExtra={toggleConfirmarExtra}
             />
           ))}
         </div>
@@ -2645,7 +2673,7 @@ export default function ExplorerFleetControl() {
                         <p className="text-sm font-bold" style={F_MONO}>Fact. {f.numero}</p>
                         <p className="text-xs text-slate-300">{f.proveedor} · {f.fecha}</p>
                       </div>
-                      <DetalleFactura f={f} conAcciones confirmarBorrar={confirmarBorrar} onEliminarLinea={eliminarLineaFactura} onAgregarItem={abrirItemFactura} onVincularExtra={abrirVincularExtra} />
+                      <DetalleFactura f={f} conAcciones confirmarBorrar={confirmarBorrar} onEliminarLinea={eliminarLineaFactura} onAgregarItem={abrirItemFactura} onVincularExtra={abrirVincularExtra} onConfirmarExtra={toggleConfirmarExtra} />
                     </div>
                   ))}
                 </div>
