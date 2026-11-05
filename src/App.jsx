@@ -6,7 +6,7 @@ import {
   ChevronRight, Loader2, Package, Utensils, Wrench, BedDouble, Waves, Compass,
   AlertTriangle, X, FileText, ClipboardList, LayoutDashboard, Boxes, Tags,
   Plus, RefreshCw, CalendarDays, ArrowUpRight, ShieldCheck, Download, Search, Smartphone,
-  Pencil, MinusCircle,
+  Pencil, MinusCircle, CheckCheck,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -671,12 +671,13 @@ const FilaItem = ({ req, it, confirmarBorrar, onConciliar, onEliminarItem, onEdi
   );
 };
 
-const TarjetaReq = ({ r, abierto, onToggle, confirmarBorrar, onEliminar, onConciliar, onEliminarItem, onNuevoItem, onEditarCantidad }) => {
+const TarjetaReq = ({ r, abierto, onToggle, confirmarBorrar, onEliminar, onConciliar, onEliminarItem, onNuevoItem, onEditarCantidad, onMarcarTodo }) => {
   const exigibles = r.items.filter(esExigible);
   const total = exigibles.length;
   const rec = exigibles.filter((i) => i.recibido).length;
   const monto = round2(r.items.reduce((s, i) => s + (i.recibido ? i.precioTotal || 0 : 0), 0));
   const pidiendo = confirmarBorrar === "req:" + r.id;
+  const marcandoTodo = confirmarBorrar === "todo:" + r.id;
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center gap-2 p-3">
@@ -716,12 +717,25 @@ const TarjetaReq = ({ r, abierto, onToggle, confirmarBorrar, onEliminar, onConci
           {r.items.map((it) => (
             <FilaItem key={it.id} req={r} it={it} confirmarBorrar={confirmarBorrar} onConciliar={onConciliar} onEliminarItem={onEliminarItem} onEditarCantidad={onEditarCantidad} />
           ))}
-          <button
-            onClick={() => onNuevoItem(r.id)}
-            className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 px-3 py-2.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-50"
-          >
-            <Plus className="h-4 w-4" /> Agregar ítem
-          </button>
+          <div className="flex border-t border-slate-100">
+            <button
+              onClick={() => onNuevoItem(r.id)}
+              className="flex flex-1 items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-50"
+            >
+              <Plus className="h-4 w-4" /> Agregar ítem
+            </button>
+            {rec < total && (
+              <button
+                onClick={() => onMarcarTodo(r.id)}
+                title="Marca todos los ítems pendientes como comprados, sin pasar por una factura"
+                className={"flex flex-1 items-center justify-center gap-1.5 border-l border-slate-100 px-3 py-2.5 text-xs font-semibold " +
+                  (marcandoTodo ? "bg-emerald-600 text-white" : "text-emerald-700 hover:bg-emerald-50")}
+              >
+                <CheckCheck className="h-4 w-4" />
+                {marcandoTodo ? "¿Confirmar " + (total - rec) + " sin factura?" : "Marcar todo recibido"}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1549,6 +1563,30 @@ export default function ExplorerFleetControl() {
     if (regFinal) await persistir(kReq(reqId), regFinal);
   };
 
+  /* Marca de una sola vez todos los ítems pendientes de una requisición como recibidos,
+     sin pasar por una factura (para compras que sí se hicieron pero no tienen factura
+     para cruzar). Pone cantidadFacturada = cantidad pedida, sin precio, y deja la marca
+     "SIN FACTURA" para distinguirlos de los que sí se conciliaron contra una factura real.
+     Los ítems NO PEDIDO (cantidad 0) y los que ya estaban recibidos quedan intactos. */
+  const marcarTodoRecibido = async (reqId) => {
+    if (!pedirConfirmacion("todo:" + reqId)) return;
+    let regFinal = null;
+    const actualizadas = reqs.map((r) => {
+      if (r.id !== reqId) return r;
+      regFinal = {
+        ...r,
+        items: r.items.map((it) =>
+          !it.recibido && esExigible(it)
+            ? { ...it, recibido: true, cantidadFacturada: it.cantidad, precioUnitario: null, precioTotal: null, factura: "SIN FACTURA" }
+            : it
+        ),
+      };
+      return regFinal;
+    });
+    setReqs(actualizadas);
+    if (regFinal) await persistir(kReq(reqId), regFinal);
+  };
+
   const eliminarLineaFactura = async (factId, tipo, idx) => {
     if (!pedirConfirmacion("lf:" + factId + ":" + tipo + ":" + idx)) return;
     const fact = facts.find((f) => f.id === factId);
@@ -1806,7 +1844,7 @@ export default function ExplorerFleetControl() {
                       onToggle={() => setExpandidos((p) => ({ ...p, [r.id]: !p[r.id] }))}
                       confirmarBorrar={confirmarBorrar} onEliminar={eliminarReq}
                       onConciliar={abrirConciliar} onEliminarItem={eliminarItemReq} onNuevoItem={abrirNuevoItem}
-                      onEditarCantidad={abrirEditarCantidad}
+                      onEditarCantidad={abrirEditarCantidad} onMarcarTodo={marcarTodoRecibido}
                     />
                   ))}
                 </div>
