@@ -6,6 +6,7 @@ import {
   ChevronRight, Loader2, Package, Utensils, Wrench, BedDouble, Waves, Compass,
   AlertTriangle, X, FileText, ClipboardList, LayoutDashboard, Boxes, Tags,
   Plus, RefreshCw, CalendarDays, ArrowUpRight, ShieldCheck, Download, Search, Smartphone,
+  Pencil, MinusCircle,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -614,25 +615,36 @@ const SelectorBarco = ({ valor, onChange, oscuro, ancho }) => (
   </div>
 );
 
-const FilaItem = ({ req, it, confirmarBorrar, onConciliar, onEliminarItem }) => {
+const FilaItem = ({ req, it, confirmarBorrar, onConciliar, onEliminarItem, onEditarCantidad }) => {
   const pidiendo = confirmarBorrar === "it:" + it.id;
+  const noPedido = !it.recibido && (num(it.cantidad) ?? 0) === 0;
   return (
-    <div className={"flex items-start gap-2.5 border-b border-slate-100 px-3 py-2.5 last:border-b-0 " + (it.recibido ? "bg-emerald-50/40" : "")}>
+    <div className={"flex items-start gap-2.5 border-b border-slate-100 px-3 py-2.5 last:border-b-0 " +
+      (it.recibido ? "bg-emerald-50/40" : noPedido ? "opacity-60" : "")}>
       <button
         onClick={() => onConciliar(req, it)}
-        className="mt-0.5 shrink-0 rounded-full text-slate-300 hover:text-emerald-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600"
-        aria-label={it.recibido ? "Editar conciliación" : "Conciliar ítem"}
-        title={it.recibido ? "Editar precio / marcar pendiente" : "Marcar recibido y poner precio"}
+        className={"mt-0.5 shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600 " +
+          (it.recibido ? "text-emerald-600" : noPedido ? "text-slate-300 hover:text-slate-400" : "text-slate-300 hover:text-emerald-600")}
+        aria-label={it.recibido ? "Editar conciliación" : noPedido ? "Ítem no pedido" : "Conciliar ítem"}
+        title={it.recibido ? "Editar precio / marcar pendiente" : noPedido ? "No pedido: no cuenta como pendiente" : "Marcar recibido y poner precio"}
       >
-        {it.recibido ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : <Circle className="h-5 w-5" />}
+        {it.recibido ? <CheckCircle2 className="h-5 w-5" /> : noPedido ? <MinusCircle className="h-5 w-5" /> : <Circle className="h-5 w-5" />}
       </button>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium leading-snug text-slate-800">{it.descripcion}</p>
-        <p className="mt-0.5 text-xs text-slate-500" style={F_MONO}>
-          {!it.recibido && (num(it.cantidad) ?? 0) === 0
+        <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500" style={F_MONO}>
+          {noPedido
             ? <span className="rounded bg-slate-100 px-1 py-0.5 font-semibold text-slate-500">NO PEDIDO · {it.unidad}</span>
             : <>Pedido: {it.cantidad} {it.unidad}</>}
           {it.cantidadFacturada != null && <span> · Fact: {it.cantidadFacturada}</span>}
+          <button
+            onClick={() => onEditarCantidad(req, it)}
+            className="rounded p-0.5 text-slate-300 hover:bg-cyan-50 hover:text-cyan-700"
+            aria-label="Editar cantidad pedida"
+            title="Editar cantidad pedida"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
         </p>
         {it.factura && (
           <span className="mt-1 inline-block rounded border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-xs text-cyan-800" style={F_MONO}>
@@ -659,7 +671,7 @@ const FilaItem = ({ req, it, confirmarBorrar, onConciliar, onEliminarItem }) => 
   );
 };
 
-const TarjetaReq = ({ r, abierto, onToggle, confirmarBorrar, onEliminar, onConciliar, onEliminarItem, onNuevoItem }) => {
+const TarjetaReq = ({ r, abierto, onToggle, confirmarBorrar, onEliminar, onConciliar, onEliminarItem, onNuevoItem, onEditarCantidad }) => {
   const exigibles = r.items.filter(esExigible);
   const total = exigibles.length;
   const rec = exigibles.filter((i) => i.recibido).length;
@@ -702,7 +714,7 @@ const TarjetaReq = ({ r, abierto, onToggle, confirmarBorrar, onEliminar, onConci
       {abierto && (
         <div>
           {r.items.map((it) => (
-            <FilaItem key={it.id} req={r} it={it} confirmarBorrar={confirmarBorrar} onConciliar={onConciliar} onEliminarItem={onEliminarItem} />
+            <FilaItem key={it.id} req={r} it={it} confirmarBorrar={confirmarBorrar} onConciliar={onConciliar} onEliminarItem={onEliminarItem} onEditarCantidad={onEditarCantidad} />
           ))}
           <button
             onClick={() => onNuevoItem(r.id)}
@@ -879,6 +891,7 @@ export default function ExplorerFleetControl() {
   const [modalReq, setModalReq] = useState(null);
   const [modalFact, setModalFact] = useState(null);
   const [modalCon, setModalCon] = useState(null);
+  const [modalEditarCant, setModalEditarCant] = useState(null);
   const [modalNuevo, setModalNuevo] = useState(null);
   const [modalItemFact, setModalItemFact] = useState(null);
   const [modalVincular, setModalVincular] = useState(null);
@@ -1099,6 +1112,15 @@ export default function ExplorerFleetControl() {
     setModalReq((prev) => ({
       ...prev,
       resultados: prev.resultados.map((r) => (r.fileId === fileId ? { ...r, items: r.items.filter((it) => it.id !== itemId) } : r)),
+    }));
+
+  // Edita la cantidad/unidad de un ítem ya extraído, antes de guardar el pedido (vista previa).
+  const editarItemResultadoReq = (fileId, itemId, cambios) =>
+    setModalReq((prev) => ({
+      ...prev,
+      resultados: prev.resultados.map((r) =>
+        r.fileId !== fileId ? r : { ...r, items: r.items.map((it) => (it.id !== itemId ? it : { ...it, ...cambios })) }
+      ),
     }));
 
   const agregarItemResultadoReq = (fileId) => {
@@ -1322,6 +1344,22 @@ export default function ExplorerFleetControl() {
       recibido: false, cantidadFacturada: null, precioUnitario: null, precioTotal: null, factura: null,
     });
     setModalCon(null);
+  };
+
+  /* Editar la cantidad PEDIDA (lo que se puso en el pedido original) de un ítem ya
+     guardado, sin importar si está marcado como recibido o no. Útil sobre todo para
+     corregir a 0 (NO PEDIDO) los ítems que la extracción no haya marcado bien, o para
+     poner la cantidad real cuando el documento sí la pedía. Al quedar en 0 y sin recibir,
+     el ítem deja de contar como pendiente automáticamente (ver esExigible). */
+  const abrirEditarCantidad = (r, it) =>
+    setModalEditarCant({ reqId: r.id, itemId: it.id, descripcion: it.descripcion, cant: String(it.cantidad ?? 0), unidad: it.unidad || "" });
+
+  const guardarEditarCantidad = async () => {
+    const m = modalEditarCant;
+    const cant = num(m.cant) ?? 0;
+    const unidad = (m.unidad || "UND").toUpperCase().trim() || "UND";
+    await actualizarItem(m.reqId, m.itemId, { cantidad: cant, unidad });
+    setModalEditarCant(null);
   };
 
   const abrirNuevoItem = (reqId) => setModalNuevo({ reqId, desc: "", cant: "", unidad: "" });
@@ -1768,6 +1806,7 @@ export default function ExplorerFleetControl() {
                       onToggle={() => setExpandidos((p) => ({ ...p, [r.id]: !p[r.id] }))}
                       confirmarBorrar={confirmarBorrar} onEliminar={eliminarReq}
                       onConciliar={abrirConciliar} onEliminarItem={eliminarItemReq} onNuevoItem={abrirNuevoItem}
+                      onEditarCantidad={abrirEditarCantidad}
                     />
                   ))}
                 </div>
@@ -2372,15 +2411,31 @@ export default function ExplorerFleetControl() {
                         {r.items.length === 0 && (
                           <p className="px-2.5 py-3 text-center text-xs text-slate-400">Sin ítems. Agrégalos manualmente abajo.</p>
                         )}
-                        {r.items.map((it) => (
-                          <div key={it.id} className="flex items-center gap-2 px-2.5 py-1.5">
+                        {r.items.map((it) => {
+                          const itemNoPedido = (num(it.cantidad) ?? 0) === 0;
+                          return (
+                          <div key={it.id} className={"flex items-center gap-2 px-2.5 py-1.5 " + (itemNoPedido ? "opacity-60" : "")}>
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-xs font-medium text-slate-800">{it.descripcion}</p>
-                              <p className="text-xs text-slate-500" style={F_MONO}>
-                                {(num(it.cantidad) ?? 0) === 0
-                                  ? <span className="rounded bg-slate-100 px-1 py-0.5 font-semibold text-slate-500">NO PEDIDO · {it.unidad}</span>
-                                  : <>{it.cantidad} {it.unidad}</>}
-                              </p>
+                              <div className="mt-0.5 flex items-center gap-1" style={F_MONO}>
+                                {itemNoPedido && (
+                                  <span className="rounded bg-slate-100 px-1 py-0.5 text-xs font-semibold text-slate-500">NO PEDIDO</span>
+                                )}
+                                <input
+                                  type="number"
+                                  value={it.cantidad}
+                                  onChange={(e) => editarItemResultadoReq(r.fileId, it.id, { cantidad: e.target.value === "" ? "" : num(e.target.value) ?? 0 })}
+                                  className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600"
+                                  title="Cantidad pedida (ponla en 0 para NO PEDIDO)"
+                                />
+                                <input
+                                  type="text"
+                                  value={it.unidad}
+                                  onChange={(e) => editarItemResultadoReq(r.fileId, it.id, { unidad: e.target.value.toUpperCase() })}
+                                  className="w-16 rounded border border-slate-200 px-1 py-0.5 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600"
+                                  title="Unidad"
+                                />
+                              </div>
                             </div>
                             <button
                               onClick={() => quitarItemResultadoReq(r.fileId, it.id)}
@@ -2390,7 +2445,8 @@ export default function ExplorerFleetControl() {
                               <X className="h-4 w-4" />
                             </button>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                       <div className="space-y-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-2.5">
                         <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">Agregar ítem manual</p>
@@ -2627,6 +2683,53 @@ export default function ExplorerFleetControl() {
               )}
               <button onClick={guardarConciliacion} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
                 Guardar ✓
+              </button>
+            </div>
+          </div>
+        </ModalBase>
+      )}
+
+      {/* ---------- Modal: editar cantidad pedida ---------- */}
+      {modalEditarCant && (
+        <ModalBase onClose={() => setModalEditarCant(null)}>
+          <CabeceraModal titulo="Editar cantidad pedida" onClose={() => setModalEditarCant(null)} />
+          <div className="space-y-4 p-4">
+            <div className="rounded-lg bg-slate-50 px-3 py-2">
+              <p className="text-sm font-semibold text-slate-800">{modalEditarCant.descripcion}</p>
+              <p className="text-xs text-slate-500">
+                Pon la cantidad que realmente se pidió. Déjala en 0 para marcarlo como NO PEDIDO
+                (no cuenta como pendiente).
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Etiqueta>Cantidad pedida</Etiqueta>
+                <input
+                  type="number"
+                  value={modalEditarCant.cant}
+                  onChange={(e) => setModalEditarCant((prev) => ({ ...prev, cant: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600"
+                  style={F_MONO}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <Etiqueta>Unidad</Etiqueta>
+                <input
+                  type="text"
+                  value={modalEditarCant.unidad}
+                  onChange={(e) => setModalEditarCant((prev) => ({ ...prev, unidad: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600"
+                  style={F_MONO}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => setModalEditarCant(null)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                Cancelar
+              </button>
+              <button onClick={guardarEditarCantidad} className="rounded-xl bg-cyan-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-cyan-800">
+                Guardar
               </button>
             </div>
           </div>
