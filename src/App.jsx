@@ -1076,7 +1076,7 @@ export default function ExplorerFleetControl() {
 
   const pendientesGlobal = useMemo(() => {
     const lista = [];
-    reqs.forEach((r) => (r.items || []).forEach((it) => { if (!it.recibido) lista.push({ req: r, it }); }));
+    reqs.forEach((r) => (r.items || []).forEach((it) => { if (!it.recibido && esExigible(it)) lista.push({ req: r, it }); }));
     return lista;
   }, [reqs]);
 
@@ -1486,7 +1486,7 @@ export default function ExplorerFleetControl() {
     if (!fact || !extra) return;
     const candidatos = pendientesGlobal.slice(0, 400);
     setModalVincular({
-      factId, extraIdx, extra, seleccion: "", error: null,
+      factId, extraIdx, extra, seleccion: "", reqNuevo: "", error: null,
       cargandoSugerencia: candidatos.length > 0, sugerencia: null,
     });
     if (!candidatos.length) return;
@@ -1540,6 +1540,50 @@ export default function ExplorerFleetControl() {
       coincidencias: [...(fact.coincidencias || []), {
         reqId, itemId, reqNumero: req.numero, departamento: req.departamento,
         descripcion: it.descripcion, cantidad: cant, unidad: it.unidad, precioUnitario: pu, precioTotal: pt,
+      }],
+    });
+    await reemplazarFactura(nuevaF);
+    setModalVincular(null);
+  };
+
+  const agregarComoItemNuevo = async () => {
+    const m = modalVincular;
+    if (!m) return;
+    if (!m.reqNuevo) return setModalVincular({ ...m, error: "Elige a qué requisición agregarlo." });
+    const fact = facts.find((f) => f.id === m.factId);
+    const extra = fact && (fact.extras || [])[m.extraIdx];
+    if (!fact || !extra || extra.descripcion !== m.extra.descripcion) {
+      return setModalVincular({ ...m, error: "La línea de la factura ya no está disponible." });
+    }
+    const req = reqs.find((r) => r.id === m.reqNuevo);
+    if (!req) return setModalVincular({ ...m, error: "La requisición elegida ya no está disponible." });
+
+    const cant = extra.cantidad != null ? extra.cantidad : 1;
+    const unidad = extra.unidad || "UND";
+    let pu = extra.precioUnitario;
+    let pt = extra.precioTotal;
+    if (pt == null && pu != null) pt = round2(cant * pu);
+    if (pu == null && pt != null && cant) pu = round2(pt / cant);
+
+    const nuevoItem = {
+      id: uid(), descripcion: extra.descripcion, cantidad: cant, unidad,
+      recibido: true, cantidadFacturada: cant, precioUnitario: pu, precioTotal: pt, factura: fact.numero,
+    };
+    let regFinal = null;
+    const actualizadas = reqs.map((r) => {
+      if (r.id !== req.id) return r;
+      regFinal = { ...r, items: [...r.items, nuevoItem] };
+      return regFinal;
+    });
+    setReqs(actualizadas);
+    if (regFinal) await persistir(kReq(req.id), regFinal);
+
+    const nuevaF = recalcularTotalesFactura({
+      ...fact,
+      extras: (fact.extras || []).filter((_, i) => i !== m.extraIdx),
+      coincidencias: [...(fact.coincidencias || []), {
+        reqId: req.id, itemId: nuevoItem.id, reqNumero: req.numero, departamento: req.departamento,
+        descripcion: nuevoItem.descripcion, cantidad: cant, unidad, precioUnitario: pu, precioTotal: pt,
       }],
     });
     await reemplazarFactura(nuevaF);
@@ -3012,6 +3056,37 @@ export default function ExplorerFleetControl() {
               className="w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               Agregar a la requisición
+            </button>
+
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
+              <div className="h-px flex-1 bg-slate-200" /> o <div className="h-px flex-1 bg-slate-200" />
+            </div>
+
+            <div>
+              <Etiqueta>Agregarlo como ítem nuevo (sin requisición pendiente)</Etiqueta>
+              <select
+                value={modalVincular.reqNuevo}
+                onChange={(e) => setModalVincular((prev) => ({ ...prev, reqNuevo: e.target.value, error: null }))}
+                className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-600"
+              >
+                <option value="">Elegir requisición…</option>
+                {reqs.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    Req. {r.numero} ({depInfo(r.departamento).corto})
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Se crea un ítem nuevo, ya marcado como recibido, dentro de la requisición elegida — para compras que no estaban en ninguna lista.
+              </p>
+            </div>
+
+            <button
+              onClick={agregarComoItemNuevo}
+              disabled={!modalVincular.reqNuevo}
+              className="w-full rounded-xl border border-cyan-600 px-4 py-3 font-semibold text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
+            >
+              Agregar como ítem nuevo
             </button>
           </div>
         </ModalBase>
